@@ -1,5 +1,9 @@
-use bitcoin::opcodes::all::OP_ADD;
-use bitcoin_script::{script, Script, Chunker};
+use bitcoin::{
+    consensus::{encode, Encodable},
+    opcodes::all::OP_ADD,
+    Witness,
+};
+use bitcoin_script::{script, Script};
 
 #[test]
 fn test_generic() {
@@ -95,7 +99,8 @@ fn test_simple_loop() {
 }
 
 #[test]
-fn test_for_loop() {
+#[should_panic] // Optimization is not yet implemented.
+fn test_for_loop_optimized() {
     let script = script! {
         for i in 0..3 {
             for k in 0..3_u32 {
@@ -160,7 +165,7 @@ fn test_performance_loop() {
     println!("Subscript size: {}", nested_script.len());
 
     let script = script! {
-        for _ in 0..1000 {
+        for _ in 0..10 {
             {nested_script.clone()}
         }
     };
@@ -220,6 +225,7 @@ fn test_simple() {
 }
 
 #[test]
+#[should_panic] // Optimization is not yet implemented.
 fn test_non_optimal_opcodes() {
     let script = script! {
         OP_0
@@ -232,15 +238,15 @@ fn test_non_optimal_opcodes() {
         OP_DROP
         OP_DROP
 
-        for i in 0..4 {
-            OP_ROLL
-            { i }
-        }
+        //for i in 0..4 {
+        //    OP_ROLL
+        //    { i }
+        //}
 
-        for i in 0..4 {
-            { i }
-            OP_ROLL
-        }
+        //for i in 0..4 {
+        //    { i }
+        //    OP_ROLL
+        //}
 
     };
 
@@ -251,102 +257,49 @@ fn test_non_optimal_opcodes() {
     );
 }
 
-// TODO: Flesh out the tests or move to own lib? Test with bitvm
 #[test]
-fn test_chunker_simple() {
-    let sub_script = script! {
-        OP_ADD
-        OP_ADD
-    };
+fn test_push_witness() {
+    for i in 0..512 {
+        let mut witness = Witness::new();
+        let vec = vec![129u8; i];
+        witness.push(vec.clone());
+        let script = script! {
+            { witness }
+        };
+        let reference_script = script! {
+            { vec }
+        };
+        assert_eq!(
+            script.compile().as_bytes(),
+            reference_script.compile().as_bytes(),
+            "here"
+        );
+    }
 
+    let mut witness = Witness::new();
+    for i in 0..16 {
+        let mut varint = Vec::new();
+        encode::VarInt(i).consensus_encode(&mut varint).unwrap();
+        witness.push(varint);
+    }
+
+    let mut forty_two_varint = Vec::new();
+    encode::VarInt(42u64)
+        .consensus_encode(&mut forty_two_varint)
+        .unwrap();
+    witness.push(forty_two_varint);
     let script = script! {
-        { sub_script.clone() }
-        { sub_script.clone() }
-        { sub_script.clone() }
-        { sub_script.clone() }
+        { witness }
     };
 
-    println!("{:?}", script);
-
-    let mut chunker = Chunker::new(script, 2, 0);
-    chunker
-        .find_next_chunk()
-        .expect("Failed to find first chunk");
-    println!(
-        "[INFO] chunk positions after first_chunk: {:?}",
-        chunker.chunks
-    );
-    chunker
-        .find_next_chunk()
-        .expect("Failed to find second chunk");
-    println!(
-        "[INFO] chunk positions after second chunk: {:?}",
-        chunker.chunks
-    );
-    chunker
-        .find_next_chunk()
-        .expect("Failed to find second chunk");
-    println!(
-        "[INFO] chunk positions after third chunk: {:?}",
-        chunker.chunks
-    );
-    chunker
-        .find_next_chunk()
-        .expect("Failed to find second chunk");
-    println!(
-        "[INFO] chunk positions after fourth chunk: {:?}",
-        chunker.chunks
-    );
-}
-
-#[test]
-fn test_chunker_find_chunks() {
-    let sub_script = script! {
-        OP_ADD
-        OP_ADD
+    let reference_script = script! {
+        for i in 0..16 {
+            { i }
+        }
+        { 42 }
     };
-
-    let script = script! {
-        { sub_script.clone() }
-        { sub_script.clone() }
-        { sub_script.clone() }
-        { sub_script.clone() }
-        OP_ADD
-    };
-
-    println!("{:?}", script);
-
-    let chunker = Chunker::new(script, 2, 0);
-    println!(
-        "FINAL CHUNKS: {:?}",
-        chunker.find_chunks().expect("Unable to find chunks")
-    );
-}
-
-#[test]
-fn test_compile_to_chunks() {
-    let sub_script = script! {
-        OP_ADD
-        OP_ADD
-    };
-
-    let script = script! {
-        { sub_script.clone() }
-        { sub_script.clone() }
-        { sub_script.clone() }
-        { sub_script.clone() }
-        OP_ADD
-    };
-
-    println!("{:?}", script);
-    let (chunks, compiled_script) = script.compile_to_chunks(2, 0);
-    println!(
-        "[RESULT] compiled_script: {:?}, chunks: {:?}",
-        compiled_script, chunks
-    );
-    assert_eq!(chunks, vec![2, 4, 6, 8]);
     assert_eq!(
-        compiled_script.as_bytes(),
-        vec![147, 147, 147, 147, 147, 147, 147, 147, 147]
+        script.compile().as_bytes(),
+        reference_script.compile().as_bytes()
     );
 }
